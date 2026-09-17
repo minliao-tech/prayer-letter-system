@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block content %}
+<div class="pagehead"><div><div class="eyebrow">REVIEW</div><h1>{{sub.unit_name}}</h1></div><p>{{sub.week_date}} · {{sub.group_code}}組</p></div>
+<form method="post" class="panel"><label>狀態<select name="status"><option value="approved">已確認</option><option value="submitted">已繳交</option><option value="revision">需修改</option></select></label>
+<hr><h2>代禱事項</h2><div id="items">{% for item in items %}<div class="item"><span>{{loop.index}}</span><textarea name="prayer_item" rows="4">{{item.content}}</textarea></div>{% endfor %}</div>
+<button type="button" class="btn" id="add">＋ 新增一項</button><div class="submitbar"><button class="btn primary">儲存修改</button></div></form>
+{% endblock %}{% block scripts %}<script>document.querySelector('#add').onclick=()=>{let b=document.querySelector('#items'),n=b.children.length+1,d=document.createElement('div');d.className='item';d.innerHTML=`<span>${n}</span><textarea name="prayer_item" rows="4"></textarea>`;b.appendChild(d)}</script>{% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block title %}管理後台{% endblock %}{% block content %}
+<div class="pagehead"><div><div class="eyebrow">ADMIN</div><h1>{{group_code}}組 · 收件進度</h1></div><div class="score">{{submitted}} <small>/ {{total}}</small></div></div>
+<div class="toolbar"><form method="get"><input type="date" name="week" value="{{week_date}}"><select name="group">{% for g in ['A','B','C','D'] %}<option {% if g==group_code %}selected{% endif %}>{{g}}</option>{% endfor %}</select><button class="btn">切換</button></form>
+<a class="btn primary" href="/export?week={{week_date}}&group={{group_code}}">產生 Word</a></div>
+<div class="progress"><i style="width:{{(submitted/total*100) if total else 0}}%"></i></div>
+<div class="table"><div class="tr th"><span>上層</span><span>單位</span><span>狀態</span><span>事項</span><span></span></div>
+{% for row in status_rows %}<div class="tr"><span>{{row.parent}}</span><strong>{{row.unit}}</strong>
+{% if row.submission %}<span class="ok">● 已繳交</span><span>{{row.submission.item_count}} 項</span><span><a href="/admin/edit/{{row.submission.id}}">編輯</a></span>
+{% else %}<span class="missing">○ 尚未繳交</span><span>—</span><span></span>{% endif %}</div>{% endfor %}</div>
+{% endblock %}
