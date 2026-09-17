@@ -1,19 +1,154 @@
-{% extends "base.html" %}{% block title %}填寫代禱信{% endblock %}{% block content %}
-<div class="pagehead"><div><div class="eyebrow">SUBMISSION</div><h1>填寫本週代禱事項</h1></div><p>不限制項數，按「＋新增」即可繼續填寫。</p></div>
+{% extends "base.html" %}
+{% block title %}填寫代禱信{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <div>
+    <div class="eyebrow">SUBMISSION</div>
+    <h1>填寫本週代禱事項</h1>
+  </div>
+  <p>不限制項數，按「＋新增」即可繼續填寫。</p>
+</div>
+
 <form method="post" class="panel" id="form">
-<div class="grid2"><label>批次日期<input type="date" name="week_date" value="{{week_date}}" required></label>
-<label>輪值組別<select name="group_code" id="group" required>{% for g in groups %}<option value="{{g}}" {% if g==group_code %}selected{% endif %}>{{g}} 組</option>{% endfor %}</select></label></div>
-<div class="grid2"><label>上層單位<select name="parent_unit" id="parent" required></select></label>
-<label>填寫單位<select name="unit_name" id="unit" required></select></label></div>
-<div class="grid2"><label>填寫人（選填）<input name="contact_name"></label><label>Email（選填）<input type="email" name="contact_email"></label></div>
-<hr><h2>代禱事項</h2><div id="items"><div class="item"><span>1</span><textarea name="prayer_item" rows="4" required placeholder="請輸入代禱內容…"></textarea></div></div>
-<button type="button" class="btn" id="add">＋ 新增一項</button>
-<div class="submitbar"><button class="btn primary" type="submit">送出代禱事項</button></div>
-</form>{% endblock %}
-{% block scripts %}<script>
-const data={{groups|tojson}}, g=document.querySelector('#group'), p=document.querySelector('#parent'), u=document.querySelector('#unit');
-function parents(){p.innerHTML=''; Object.keys(data[g.value]).forEach(x=>p.add(new Option(x,x))); units();}
-function units(){u.innerHTML=''; let a=data[g.value][p.value]; if(a.length){a.forEach(x=>u.add(new Option(x,x)))}else{u.add(new Option(p.value,p.value))}}
-g.onchange=parents;p.onchange=units;parents();
-document.querySelector('#add').onclick=()=>{let box=document.querySelector('#items'),n=box.children.length+1,d=document.createElement('div');d.className='item';d.innerHTML=`<span>${n}</span><textarea name="prayer_item" rows="4" placeholder="請輸入代禱內容…"></textarea>`;box.appendChild(d)}
-</script>{% endblock %}
+
+  <div class="grid2">
+    <label>
+      批次日期
+      <input type="date" name="week_date" value="{{week_date}}" required>
+    </label>
+
+    <label>
+      輪值組別
+      <select name="group_code" id="group" required>
+        {% for g in groups %}
+        <option value="{{g}}" {% if g==group_code %}selected{% endif %}>
+          {{g}} 組
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="grid2">
+    <label>
+      上層單位
+      <select name="parent_unit" id="parent" required></select>
+    </label>
+
+    <label>
+      填寫單位
+      <select name="unit_name" id="unit" required></select>
+    </label>
+  </div>
+
+  <div class="grid2">
+    <label>
+      填寫人（選填）
+      <input name="contact_name">
+    </label>
+
+    <label>
+      Email（選填）
+      <input type="email" name="contact_email">
+    </label>
+  </div>
+
+  <hr>
+
+  <h2>代禱事項</h2>
+
+  <div id="items">
+    <div class="item">
+      <span>1</span>
+      <textarea
+        name="prayer_item"
+        rows="4"
+        required
+        placeholder="請輸入代禱內容…"></textarea>
+    </div>
+  </div>
+
+  <button type="button" class="btn" id="add">
+    ＋ 新增一項
+  </button>
+
+  <div class="submitbar">
+    <button class="btn primary" type="submit">
+      送出代禱事項
+    </button>
+  </div>
+
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const data = {{ groups | tojson }};
+
+const groupSelect = document.querySelector('#group');
+const parentSelect = document.querySelector('#parent');
+const unitSelect = document.querySelector('#unit');
+
+function loadParents() {
+
+  parentSelect.innerHTML = '';
+  unitSelect.innerHTML = '';
+
+  const groupData = data[groupSelect.value] || {};
+
+  Object.keys(groupData).forEach(parent => {
+    parentSelect.add(new Option(parent, parent));
+  });
+
+  loadUnits();
+}
+
+function loadUnits() {
+
+  unitSelect.innerHTML = '';
+
+  const groupData = data[groupSelect.value] || {};
+  const parent = parentSelect.value;
+
+  const children = groupData[parent] || [];
+
+  if (children.length > 0) {
+
+    children.forEach(unit => {
+      unitSelect.add(new Option(unit, unit));
+    });
+
+  } else {
+
+    unitSelect.add(new Option(parent, parent));
+
+  }
+}
+
+groupSelect.addEventListener('change', loadParents);
+parentSelect.addEventListener('change', loadUnits);
+
+loadParents();
+
+document.querySelector('#add').addEventListener('click', () => {
+
+  const items = document.querySelector('#items');
+  const number = items.children.length + 1;
+
+  const box = document.createElement('div');
+  box.className = 'item';
+
+  box.innerHTML = `
+    <span>${number}</span>
+    <textarea
+      name="prayer_item"
+      rows="4"
+      required
+      placeholder="請輸入代禱內容…"></textarea>
+  `;
+
+  items.appendChild(box);
+});
+</script>
+{% endblock %}
