@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<section class="hero">
+<div><div class="eyebrow">本週輪值</div><h1>{{group_code}} 組</h1><p>{{week_date}} 截止批次</p>
+<div class="actions"><a class="btn primary" href="/submit">開始填寫</a><a class="btn" href="/admin?week={{week_date}}&group={{group_code}}">查看收件進度</a></div></div>
+<div class="cycle"><div>A</div><div>B</div><div>C</div><div>D</div></div>
+</section>
+<section class="cards"><article><b>01</b><h3>部門填寫</h3><p>依輪值組別選擇單位，可自由新增多項代禱事項。</p></article>
+<article><b>02</b><h3>後台確認</h3><p>查看已繳／未繳，並直接修改內容與確認狀態。</p></article>
+<article><b>03</b><h3>一鍵 Word</h3><p>依固定順序自動整理並輸出 .docx。</p></article></section>
+{% endblock %}
