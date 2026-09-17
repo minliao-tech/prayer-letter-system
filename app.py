@@ -230,7 +230,7 @@ def export_word():
     filename=f"{week.replace('-','')} 教會代禱信 {group_code}組.docx"
     return send_file(bio,as_attachment=True,download_name=filename,
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+init_db()
 
 if __name__ == "__main__":
-    init_db()
     app.run(debug=True, port=5000)
