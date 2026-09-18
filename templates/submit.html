@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+
 {% block title %}填寫代禱信{% endblock %}
 
 {% block content %}
@@ -13,7 +14,6 @@
 
 <form method="post" class="panel" id="prayer-form">
 
-  <!-- 日期、組別 -->
   <div class="grid2">
 
     <label>
@@ -42,12 +42,9 @@
 
   </div>
 
-
-  <!-- 單位選擇區 -->
   <div class="grid2">
 
-    <!-- 上層單位 -->
-    <label id="parent-wrap">
+    <label>
       上層單位
       <select
         name="parent_unit"
@@ -56,8 +53,7 @@
       ></select>
     </label>
 
-    <!-- 填寫單位 -->
-    <label id="unit-wrap">
+    <label>
       填寫單位
       <select
         name="unit_name"
@@ -68,8 +64,6 @@
 
   </div>
 
-
-  <!-- 填寫人 -->
   <div class="grid2">
 
     <label>
@@ -90,29 +84,23 @@
 
   </div>
 
-
   <hr>
 
-
-  <!-- 代禱事項 -->
   <h2>代禱事項</h2>
 
   <div id="items">
 
     <div class="item">
       <span>1</span>
-
       <textarea
         name="prayer_item"
         rows="4"
         required
-        placeholder="請輸入代禱內容…"
+        placeholder="請輸入代禱內容..."
       ></textarea>
-
     </div>
 
   </div>
-
 
   <button
     type="button"
@@ -122,22 +110,18 @@
     ＋ 新增一項
   </button>
 
-
   <div class="submitbar">
-
     <button
       class="btn primary"
       type="submit"
     >
       送出代禱事項
     </button>
-
   </div>
 
 </form>
 
 {% endblock %}
-
 
 
 {% block scripts %}
@@ -155,178 +139,114 @@ const parentSelect =
 const unitSelect =
   document.querySelector("#unit");
 
-const parentWrap =
-  document.querySelector("#parent-wrap");
 
-const unitWrap =
-  document.querySelector("#unit-wrap");
+/* =========================
+   產生「上層單位」
+   ========================= */
 
+function loadParents() {
 
-/* =====================================
-   載入組別
-===================================== */
-
-function loadGroup() {
-
-  const groupCode = groupSelect.value;
-
-  const groupData =
-    data[groupCode] || {};
+  const group =
+    groupSelect.value;
 
   parentSelect.innerHTML = "";
-  unitSelect.innerHTML = "";
 
+  const parents =
+    Object.keys(data[group] || {});
 
-  /*
-    A、B 組
-    -------------------------
-    沒有真正的上下層關係。
+  parents.forEach(function(parent) {
 
-    左邊「上層單位」隱藏，
-    右邊直接顯示所有填寫單位。
-  */
+    const option =
+      document.createElement("option");
 
-  if (
-    groupCode === "A" ||
-    groupCode === "B"
-  ) {
+    option.value = parent;
+    option.textContent = parent;
 
-    parentWrap.style.display = "none";
-
-    unitWrap.style.display = "block";
-
-
-    Object.keys(groupData).forEach(unit => {
-
-      unitSelect.add(
-        new Option(unit, unit)
-      );
-
-    });
-
-
-    /*
-      後端仍然需要 parent_unit，
-      所以建立第一個值。
-      真正送出前會再同步。
-    */
-
-    if (unitSelect.options.length > 0) {
-
-      parentSelect.add(
-        new Option(
-          unitSelect.value,
-          unitSelect.value
-        )
-      );
-
-    }
-
-    return;
-  }
-
-
-
-  /*
-    C、D 組
-    -------------------------
-    顯示兩層選單
-  */
-
-  parentWrap.style.display = "block";
-
-  unitWrap.style.display = "block";
-
-
-  Object.keys(groupData).forEach(parent => {
-
-    parentSelect.add(
-      new Option(parent, parent)
-    );
+    parentSelect.appendChild(option);
 
   });
 
-
   loadUnits();
-
 }
 
 
-
-/* =====================================
-   載入子單位
-===================================== */
+/* =========================
+   產生「填寫單位」
+   ========================= */
 
 function loadUnits() {
 
-  const groupCode =
+  const group =
     groupSelect.value;
-
-  const groupData =
-    data[groupCode] || {};
 
   const parent =
     parentSelect.value;
 
   unitSelect.innerHTML = "";
 
-
-  const children =
-    groupData[parent] || [];
+  const units =
+    (data[group] &&
+     data[group][parent])
+      ? data[group][parent]
+      : [];
 
 
   /*
-    有子單位
+    如果這個上層單位
+    沒有下層單位：
+
+    填寫單位直接使用
+    上層單位名稱
   */
 
-  if (children.length > 0) {
+  if (units.length === 0) {
 
-    children.forEach(unit => {
+    const option =
+      document.createElement("option");
 
-      unitSelect.add(
-        new Option(unit, unit)
-      );
+    option.value = parent;
+    option.textContent = parent;
 
-    });
+    unitSelect.appendChild(option);
 
+    return;
   }
 
 
   /*
-    沒有子單位
-    代表上層單位自己就是填寫單位
+    有下層單位：
+
+    顯示所有下層單位
   */
 
-  else {
+  units.forEach(function(unit) {
 
-    if (parent) {
+    const option =
+      document.createElement("option");
 
-      unitSelect.add(
-        new Option(parent, parent)
-      );
+    option.value = unit;
+    option.textContent = unit;
 
-    }
+    unitSelect.appendChild(option);
 
-  }
+  });
 
 }
 
 
-
-/* =====================================
+/* =========================
    切換組別
-===================================== */
+   ========================= */
 
 groupSelect.addEventListener(
   "change",
-  loadGroup
+  loadParents
 );
 
 
-
-/* =====================================
+/* =========================
    切換上層單位
-===================================== */
+   ========================= */
 
 parentSelect.addEventListener(
   "change",
@@ -334,84 +254,22 @@ parentSelect.addEventListener(
 );
 
 
+/* =========================
+   第一次開啟網頁
+   ========================= */
 
-/* =====================================
-   A / B 組：
-   填寫單位改變時，
-   同步 parent_unit
-===================================== */
-
-unitSelect.addEventListener(
-  "change",
-  function () {
-
-    const groupCode =
-      groupSelect.value;
-
-    if (
-      groupCode === "A" ||
-      groupCode === "B"
-    ) {
-
-      parentSelect.innerHTML = "";
-
-      parentSelect.add(
-        new Option(
-          unitSelect.value,
-          unitSelect.value
-        )
-      );
-
-    }
-
-  }
-);
+loadParents();
 
 
-
-/* =====================================
-   送出前再確認一次
-===================================== */
-
-document
-  .querySelector("#prayer-form")
-  .addEventListener(
-    "submit",
-    function () {
-
-      const groupCode =
-        groupSelect.value;
-
-      if (
-        groupCode === "A" ||
-        groupCode === "B"
-      ) {
-
-        parentSelect.innerHTML = "";
-
-        parentSelect.add(
-          new Option(
-            unitSelect.value,
-            unitSelect.value
-          )
-        );
-
-      }
-
-    }
-  );
-
-
-
-/* =====================================
+/* =========================
    新增代禱事項
-===================================== */
+   ========================= */
 
 document
   .querySelector("#add")
   .addEventListener(
     "click",
-    function () {
+    function() {
 
       const items =
         document.querySelector("#items");
@@ -431,7 +289,7 @@ document
           name="prayer_item"
           rows="4"
           required
-          placeholder="請輸入代禱內容…"
+          placeholder="請輸入代禱內容..."
         ></textarea>
       `;
 
@@ -439,14 +297,6 @@ document
 
     }
   );
-
-
-
-/* =====================================
-   第一次開啟頁面
-===================================== */
-
-loadGroup();
 
 </script>
 
