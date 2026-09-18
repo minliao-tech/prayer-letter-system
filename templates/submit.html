@@ -2,6 +2,7 @@
 {% block title %}填寫代禱信{% endblock %}
 
 {% block content %}
+
 <div class="pagehead">
   <div>
     <div class="eyebrow">SUBMISSION</div>
@@ -10,145 +11,443 @@
   <p>不限制項數，按「＋新增」即可繼續填寫。</p>
 </div>
 
-<form method="post" class="panel" id="form">
+<form method="post" class="panel" id="prayer-form">
 
+  <!-- 日期、組別 -->
   <div class="grid2">
+
     <label>
       批次日期
-      <input type="date" name="week_date" value="{{week_date}}" required>
+      <input
+        type="date"
+        name="week_date"
+        value="{{ week_date }}"
+        required
+      >
     </label>
 
     <label>
       輪值組別
       <select name="group_code" id="group" required>
         {% for g in groups %}
-        <option value="{{g}}" {% if g==group_code %}selected{% endif %}>
-          {{g}} 組
+        <option
+          value="{{ g }}"
+          {% if g == group_code %}selected{% endif %}
+        >
+          {{ g }}組
         </option>
         {% endfor %}
       </select>
     </label>
+
   </div>
 
+
+  <!-- 單位選擇區 -->
   <div class="grid2">
-    <label>
+
+    <!-- 上層單位 -->
+    <label id="parent-wrap">
       上層單位
-      <select name="parent_unit" id="parent" required></select>
+      <select
+        name="parent_unit"
+        id="parent"
+        required
+      ></select>
     </label>
 
-    <label>
+    <!-- 填寫單位 -->
+    <label id="unit-wrap">
       填寫單位
-      <select name="unit_name" id="unit" required></select>
+      <select
+        name="unit_name"
+        id="unit"
+        required
+      ></select>
     </label>
+
   </div>
 
+
+  <!-- 填寫人 -->
   <div class="grid2">
+
     <label>
       填寫人（選填）
-      <input name="contact_name">
+      <input
+        type="text"
+        name="contact_name"
+      >
     </label>
 
     <label>
       Email（選填）
-      <input type="email" name="contact_email">
+      <input
+        type="email"
+        name="contact_email"
+      >
     </label>
+
   </div>
+
 
   <hr>
 
+
+  <!-- 代禱事項 -->
   <h2>代禱事項</h2>
 
   <div id="items">
+
     <div class="item">
       <span>1</span>
+
       <textarea
         name="prayer_item"
         rows="4"
         required
-        placeholder="請輸入代禱內容…"></textarea>
+        placeholder="請輸入代禱內容…"
+      ></textarea>
+
     </div>
+
   </div>
 
-  <button type="button" class="btn" id="add">
+
+  <button
+    type="button"
+    class="btn"
+    id="add"
+  >
     ＋ 新增一項
   </button>
 
+
   <div class="submitbar">
-    <button class="btn primary" type="submit">
+
+    <button
+      class="btn primary"
+      type="submit"
+    >
       送出代禱事項
     </button>
+
   </div>
 
 </form>
+
 {% endblock %}
 
+
+
 {% block scripts %}
+
 <script>
+
 const data = {{ groups | tojson }};
 
-const groupSelect = document.querySelector('#group');
-const parentSelect = document.querySelector('#parent');
-const unitSelect = document.querySelector('#unit');
+const groupSelect =
+  document.querySelector("#group");
 
-function loadParents() {
+const parentSelect =
+  document.querySelector("#parent");
 
-  parentSelect.innerHTML = '';
-  unitSelect.innerHTML = '';
+const unitSelect =
+  document.querySelector("#unit");
 
-  const groupData = data[groupSelect.value] || {};
+const parentWrap =
+  document.querySelector("#parent-wrap");
+
+const unitWrap =
+  document.querySelector("#unit-wrap");
+
+
+/* =====================================
+   載入組別
+===================================== */
+
+function loadGroup() {
+
+  const groupCode = groupSelect.value;
+
+  const groupData =
+    data[groupCode] || {};
+
+  parentSelect.innerHTML = "";
+  unitSelect.innerHTML = "";
+
+
+  /*
+    A、B 組
+    -------------------------
+    沒有真正的上下層關係。
+
+    左邊「上層單位」隱藏，
+    右邊直接顯示所有填寫單位。
+  */
+
+  if (
+    groupCode === "A" ||
+    groupCode === "B"
+  ) {
+
+    parentWrap.style.display = "none";
+
+    unitWrap.style.display = "block";
+
+
+    Object.keys(groupData).forEach(unit => {
+
+      unitSelect.add(
+        new Option(unit, unit)
+      );
+
+    });
+
+
+    /*
+      後端仍然需要 parent_unit，
+      所以建立第一個值。
+      真正送出前會再同步。
+    */
+
+    if (unitSelect.options.length > 0) {
+
+      parentSelect.add(
+        new Option(
+          unitSelect.value,
+          unitSelect.value
+        )
+      );
+
+    }
+
+    return;
+  }
+
+
+
+  /*
+    C、D 組
+    -------------------------
+    顯示兩層選單
+  */
+
+  parentWrap.style.display = "block";
+
+  unitWrap.style.display = "block";
+
 
   Object.keys(groupData).forEach(parent => {
-    parentSelect.add(new Option(parent, parent));
+
+    parentSelect.add(
+      new Option(parent, parent)
+    );
+
   });
 
+
   loadUnits();
+
 }
+
+
+
+/* =====================================
+   載入子單位
+===================================== */
 
 function loadUnits() {
 
-  unitSelect.innerHTML = '';
+  const groupCode =
+    groupSelect.value;
 
-  const groupData = data[groupSelect.value] || {};
-  const parent = parentSelect.value;
+  const groupData =
+    data[groupCode] || {};
 
-  const children = groupData[parent] || [];
+  const parent =
+    parentSelect.value;
+
+  unitSelect.innerHTML = "";
+
+
+  const children =
+    groupData[parent] || [];
+
+
+  /*
+    有子單位
+  */
 
   if (children.length > 0) {
 
     children.forEach(unit => {
-      unitSelect.add(new Option(unit, unit));
+
+      unitSelect.add(
+        new Option(unit, unit)
+      );
+
     });
 
-  } else {
+  }
 
-    unitSelect.add(new Option(parent, parent));
+
+  /*
+    沒有子單位
+    代表上層單位自己就是填寫單位
+  */
+
+  else {
+
+    if (parent) {
+
+      unitSelect.add(
+        new Option(parent, parent)
+      );
+
+    }
 
   }
+
 }
 
-groupSelect.addEventListener('change', loadParents);
-parentSelect.addEventListener('change', loadUnits);
 
-loadParents();
 
-document.querySelector('#add').addEventListener('click', () => {
+/* =====================================
+   切換組別
+===================================== */
 
-  const items = document.querySelector('#items');
-  const number = items.children.length + 1;
+groupSelect.addEventListener(
+  "change",
+  loadGroup
+);
 
-  const box = document.createElement('div');
-  box.className = 'item';
 
-  box.innerHTML = `
-    <span>${number}</span>
-    <textarea
-      name="prayer_item"
-      rows="4"
-      required
-      placeholder="請輸入代禱內容…"></textarea>
-  `;
 
-  items.appendChild(box);
-});
+/* =====================================
+   切換上層單位
+===================================== */
+
+parentSelect.addEventListener(
+  "change",
+  loadUnits
+);
+
+
+
+/* =====================================
+   A / B 組：
+   填寫單位改變時，
+   同步 parent_unit
+===================================== */
+
+unitSelect.addEventListener(
+  "change",
+  function () {
+
+    const groupCode =
+      groupSelect.value;
+
+    if (
+      groupCode === "A" ||
+      groupCode === "B"
+    ) {
+
+      parentSelect.innerHTML = "";
+
+      parentSelect.add(
+        new Option(
+          unitSelect.value,
+          unitSelect.value
+        )
+      );
+
+    }
+
+  }
+);
+
+
+
+/* =====================================
+   送出前再確認一次
+===================================== */
+
+document
+  .querySelector("#prayer-form")
+  .addEventListener(
+    "submit",
+    function () {
+
+      const groupCode =
+        groupSelect.value;
+
+      if (
+        groupCode === "A" ||
+        groupCode === "B"
+      ) {
+
+        parentSelect.innerHTML = "";
+
+        parentSelect.add(
+          new Option(
+            unitSelect.value,
+            unitSelect.value
+          )
+        );
+
+      }
+
+    }
+  );
+
+
+
+/* =====================================
+   新增代禱事項
+===================================== */
+
+document
+  .querySelector("#add")
+  .addEventListener(
+    "click",
+    function () {
+
+      const items =
+        document.querySelector("#items");
+
+      const number =
+        items.children.length + 1;
+
+      const box =
+        document.createElement("div");
+
+      box.className = "item";
+
+      box.innerHTML = `
+        <span>${number}</span>
+
+        <textarea
+          name="prayer_item"
+          rows="4"
+          required
+          placeholder="請輸入代禱內容…"
+        ></textarea>
+      `;
+
+      items.appendChild(box);
+
+    }
+  );
+
+
+
+/* =====================================
+   第一次開啟頁面
+===================================== */
+
+loadGroup();
+
 </script>
+
 {% endblock %}
