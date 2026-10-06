@@ -1,7 +1,8 @@
 from flask import Flask, request, redirect, url_for, render_template, send_file, flash
 from pathlib import Path
 from datetime import date, datetime, timedelta
-import sqlite3, io
+import sqlite3
+import io
 
 from docx import Document
 from docx.shared import Pt, RGBColor
@@ -16,7 +17,7 @@ DB = BASE / "prayer_letters.db"
 
 
 # =========================================================
-# 組別與單位設定
+# 組別與單位
 # =========================================================
 
 GROUPS = {
@@ -63,7 +64,7 @@ GROUPS = {
         "牧養支援處": [
             "牧養企劃部",
             "教育訓練部",
-           "KC館"
+             "KC館"
         ],
 
         "基層福音事工處": [],
@@ -116,22 +117,53 @@ GROUPS = {
 # =========================================================
 # 輪值設定
 # =========================================================
-
-# 2026/09/11 D
-# 2026/09/18 A
-# 2026/09/25 B
-# 2026/10/02 C
-# 2026/10/09 D
+#
+# 新基準：
+#
+# 2026/09/25 A
+# 2026/10/02 B
+# 2026/10/09 國慶連假，停辦
+# 2026/10/16 C
+# 2026/10/23 D
+# 2026/10/30 A
+# 2026/11/06 B
 # ...
+#
+# 遇到停辦日期時：
+# 1. 該週不安排組別
+# 2. 不消耗輪值
+# 3. 下一個有效星期五接續下一組
+# =========================================================
 
-ANCHOR_DATE = date(2026, 9, 11)
+ANCHOR_DATE = date(2026, 9, 25)
 
 ORDER = [
-    "D",
     "A",
     "B",
-    "C"
+    "C",
+    "D"
 ]
+
+
+# =========================================================
+# 停辦／連假日期
+# =========================================================
+#
+# 這裡放「該星期五不發代禱信」的日期。
+#
+# 未來若有其他連假，只要增加日期即可。
+#
+# 例如：
+#
+# date(2027, 2, 5),
+# date(2027, 2, 12),
+#
+# 程式會自動跳過，而且不會打亂 A/B/C/D 順序。
+# =========================================================
+
+SKIP_DATES = {
+    date(2026, 10, 9),   # 國慶連假
+}
 
 
 # =========================================================
@@ -176,44 +208,131 @@ def init_db():
 
 
 # =========================================================
-# 日期與輪值
+# 找指定日期所屬星期五
 # =========================================================
 
 def friday_of_week(d=None):
     d = d or date.today()
 
-    # Friday = 4
+    # 星期一=0，星期五=4
     if d.weekday() <= 4:
-        return d + timedelta(days=(4 - d.weekday()) % 7)
+        return d + timedelta(
+            days=(4 - d.weekday())
+        )
 
-    return d - timedelta(days=d.weekday() - 4)
-
-
-def group_for_week(week_date):
-    delta_weeks = (week_date - ANCHOR_DATE).days // 7
-    return ORDER[delta_weeks % 4]
-
-
-def current_cycle():
-    wd = friday_of_week()
-    return wd, group_for_week(wd)
+    return d - timedelta(
+        days=d.weekday() - 4
+    )
 
 
 # =========================================================
-# 計算該組應繳單位
+# 判斷是否為停辦週
+# =========================================================
+
+def is_skip_week(week_date):
+    return week_date in SKIP_DATES
+
+
+# =========================================================
+# 計算輪值組別
+# =========================================================
+
+def group_for_week(week_date):
+
+    # 停辦週沒有輪值組
+    if is_skip_week(week_date):
+        return None
+
+    # 如果查詢的是基準日前日期，
+    # 往前逐週計算有效週數
+    if week_date < ANCHOR_DATE:
+
+        valid_weeks = 0
+        cursor = ANCHOR_DATE - timedelta(days=7)
+
+        while cursor >= week_date:
+
+            if cursor not in SKIP_DATES:
+                valid_weeks += 1
+
+            cursor -= timedelta(days=7)
+
+        return ORDER[
+            (-valid_weeks) % len(ORDER)
+        ]
+
+    # 基準日之後：
+    # 只計算「沒有被跳過」的有效星期五
+    valid_weeks = 0
+    cursor = ANCHOR_DATE
+
+    while cursor < week_date:
+
+        cursor += timedelta(days=7)
+
+        if cursor > week_date:
+            break
+
+        if cursor not in SKIP_DATES:
+            valid_weeks += 1
+
+    return ORDER[
+        valid_weeks % len(ORDER)
+    ]
+
+
+# =========================================================
+# 找下一個有效輪值星期五
+# =========================================================
+
+def next_active_friday(d=None):
+
+    wd = friday_of_week(d)
+
+    while wd in SKIP_DATES:
+        wd += timedelta(days=7)
+
+    return wd
+
+
+# =========================================================
+# 本週輪值
+# =========================================================
+
+def current_cycle():
+
+    wd = next_active_friday()
+
+    group_code = group_for_week(wd)
+
+    return wd, group_code
+
+
+# =========================================================
+# 應繳單位
 # =========================================================
 
 def expected_units(group_code):
+
     out = []
+
+    if not group_code:
+        return out
 
     for parent, children in GROUPS[group_code].items():
 
         if children:
+
             for child in children:
-                out.append((parent, child))
+                out.append(
+                    (parent, child)
+                )
 
         else:
-            out.append((parent, parent))
+
+            out.append(
+                (parent, parent)
+            )
 
     return out
 
@@ -224,6 +343,7 @@ def expected_units(group_code):
 
 @app.route("/")
 def index():
+
     wd, group_code = current_cycle()
 
     return render_template(
@@ -260,13 +380,21 @@ def submit():
 
         items = [
             x.strip()
-            for x in request.form.getlist("prayer_item")
+            for x in request.form.getlist(
+                "prayer_item"
+            )
             if x.strip()
         ]
 
         if not items:
-            flash("請至少填寫一項代禱事項。")
-            return redirect(url_for("submit"))
+
+            flash(
+                "請至少填寫一項代禱事項。"
+            )
+
+            return redirect(
+                url_for("submit")
+            )
 
         con = db()
 
@@ -301,7 +429,10 @@ def submit():
 
         sid = cur.lastrowid
 
-        for i, item in enumerate(items, 1):
+        for i, item in enumerate(
+            items,
+            1
+        ):
 
             con.execute(
                 """
@@ -343,7 +474,11 @@ def submit():
 
 @app.route("/api/units/<group_code>")
 def units(group_code):
-    return GROUPS.get(group_code, {})
+
+    return GROUPS.get(
+        group_code,
+        {}
+    )
 
 
 # =========================================================
@@ -356,17 +491,38 @@ def admin():
     week = request.args.get("week")
 
     if week:
-        wd = date.fromisoformat(week)
+
+        wd = date.fromisoformat(
+            week
+        )
 
     else:
+
         wd, _ = current_cycle()
 
+    requested_group = request.args.get(
+        "group"
+    )
+
     group_code = (
-        request.args.get("group")
+        requested_group
         or group_for_week(wd)
     )
 
-    expected = expected_units(group_code)
+    # 若管理者手動查詢停辦日期，
+    # 沒有指定 group 時，
+    # 將日期移到下一個有效輪值週。
+    if not group_code:
+
+        wd = next_active_friday(
+            wd + timedelta(days=1)
+        )
+
+        group_code = group_for_week(wd)
+
+    expected = expected_units(
+        group_code
+    )
 
     con = db()
 
@@ -415,7 +571,9 @@ def admin():
             "parent": parent,
             "unit": unit,
             "submission":
-                latest.get((parent, unit))
+                latest.get(
+                    (parent, unit)
+                )
         })
 
     con.close()
@@ -435,7 +593,7 @@ def admin():
 
 
 # =========================================================
-# 後台修改代禱事項
+# 後台修改
 # =========================================================
 
 @app.route(
@@ -456,7 +614,9 @@ def edit_submission(sid):
     ).fetchone()
 
     if not sub:
+
         con.close()
+
         return "Not found", 404
 
     if request.method == "POST":
@@ -492,7 +652,10 @@ def edit_submission(sid):
             (sid,)
         )
 
-        for i, item in enumerate(items, 1):
+        for i, item in enumerate(
+            items,
+            1
+        ):
 
             con.execute(
                 """
@@ -542,7 +705,7 @@ def edit_submission(sid):
 
 
 # =========================================================
-# Word 字型設定
+# Word 字型
 # =========================================================
 
 def set_run_font(
@@ -551,26 +714,53 @@ def set_run_font(
     bold=False,
     color=None
 ):
-    run.font.name = "Microsoft JhengHei"
+
+    run.font.name = (
+        "Microsoft JhengHei"
+    )
+
     run.font.size = Pt(size)
+
     run.bold = bold
 
     if color:
-        run.font.color.rgb = RGBColor(*color)
+
+        run.font.color.rgb = (
+            RGBColor(*color)
+        )
 
 
 # =========================================================
-# Word 顏色設定
+# Word 顏色
 # =========================================================
 
-# 深綠色
-HIERARCHY_GREEN = (0, 100, 0)
+# 上層單位：藍色
+PARENT_BLUE = (
+    0,
+    102,
+    204
+)
 
-# 黑色
-PRAYER_BLACK = (0, 0, 0)
+# 填寫單位：深綠色
+UNIT_GREEN = (
+    0,
+    100,
+    0
+)
 
-# 紅色
-HEADER_RED = (192, 0, 0)
+# 代禱內容：黑色
+PRAYER_BLACK = (
+    0,
+    0,
+    0
+)
+
+# 固定標題：紅色
+HEADER_RED = (
+    192,
+    0,
+    0
+)
 
 
 # =========================================================
@@ -580,11 +770,20 @@ HEADER_RED = (192, 0, 0)
 @app.route("/export")
 def export_word():
 
-    week = request.args.get("week")
-    group_code = request.args.get("group")
+    week = request.args.get(
+        "week"
+    )
+
+    group_code = request.args.get(
+        "group"
+    )
 
     if not week or not group_code:
-        return "Missing week/group", 400
+
+        return (
+            "Missing week/group",
+            400
+        )
 
     con = db()
 
@@ -609,8 +808,11 @@ def export_word():
         )
     ).fetchall()
 
-    # 同一單位若重複繳交，
-    # 使用最後一次繳交的資料
+
+    # =====================================================
+    # 每個單位使用最後一次提交
+    # =====================================================
+
     latest = {}
 
     for r in rows:
@@ -623,18 +825,16 @@ def export_word():
         ] = r
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # 建立 Word
-    # -----------------------------------------------------
+    # =====================================================
 
     doc = Document()
 
-    sec = doc.sections[0]
 
-
-    # -----------------------------------------------------
-    # 主標題
-    # -----------------------------------------------------
+    # =====================================================
+    # Word 主標題
+    # =====================================================
 
     title = doc.add_paragraph()
 
@@ -648,7 +848,6 @@ def export_word():
         f"{group_code}組"
     )
 
-    # 主標題黑色
     set_run_font(
         r,
         16,
@@ -657,9 +856,9 @@ def export_word():
     )
 
 
-    # -----------------------------------------------------
-    # 為所提單位的同工禱告
-    # -----------------------------------------------------
+    # =====================================================
+    # 固定紅色標題
+    # =====================================================
 
     p = doc.add_paragraph()
 
@@ -675,48 +874,68 @@ def export_word():
     )
 
 
-    # -----------------------------------------------------
-    # 各階層與單位
-    # -----------------------------------------------------
+    # =====================================================
+    # 各單位
+    # =====================================================
 
-    for parent, children in GROUPS[group_code].items():
+    for parent, children in (
+        GROUPS[group_code].items()
+    ):
 
-        # 有下層單位
+        # -------------------------------------------------
+        # 有第二層
+        # -------------------------------------------------
+
         if children:
 
-            # 只有該階層至少有人繳交時
-            # 才輸出上層名稱
+            # 先確認這個上層底下
+            # 至少有一個單位已繳交
             has_submission = any(
-                latest.get((parent, unit))
+                latest.get(
+                    (parent, unit)
+                )
                 for unit in children
             )
 
             if not has_submission:
                 continue
 
+
+            # =============================================
             # 上層單位
-            # 全部使用深綠色
+            # 藍色粗體
+            # =============================================
+
             p = doc.add_paragraph()
 
-            r = p.add_run(parent)
+            r = p.add_run(
+                parent
+            )
 
             set_run_font(
                 r,
                 13,
                 True,
-                HIERARCHY_GREEN
+                PARENT_BLUE
             )
 
             units = children
 
+
+        # -------------------------------------------------
+        # 沒有第二層
+        # -------------------------------------------------
+
         else:
 
-            units = [parent]
+            units = [
+                parent
+            ]
 
 
-        # -------------------------------------------------
-        # 下層／填寫單位
-        # -------------------------------------------------
+        # =================================================
+        # 填寫單位
+        # =================================================
 
         for unit in units:
 
@@ -731,11 +950,16 @@ def export_word():
                 continue
 
 
-            # D 組福音中心顯示方式：
-            # 金門 → 金門福音中心
+            # D 組特殊顯示：
+            #
+            # 金門
+            # →
+            # 金門福音中心
+            #
             if (
                 group_code == "D"
-                and parent == "福音中心"
+                and
+                parent == "福音中心"
             ):
 
                 display = (
@@ -747,9 +971,10 @@ def export_word():
                 display = unit
 
 
-            # ---------------------------------------------
-            # 單位名稱
-            # ---------------------------------------------
+            # =============================================
+            # 【填寫單位】
+            # 深綠色粗體
+            # =============================================
 
             p = doc.add_paragraph()
 
@@ -757,18 +982,17 @@ def export_word():
                 f"【{display}】"
             )
 
-            # 所有單位名稱統一深綠色
             set_run_font(
                 r,
                 12,
                 True,
-                HIERARCHY_GREEN
+                UNIT_GREEN
             )
 
 
-            # ---------------------------------------------
-            # 取得該單位所有代禱事項
-            # ---------------------------------------------
+            # =============================================
+            # 取得代禱事項
+            # =============================================
 
             items = con.execute(
                 """
@@ -785,9 +1009,10 @@ def export_word():
             ).fetchall()
 
 
-            # ---------------------------------------------
+            # =============================================
             # 代禱內容
-            # ---------------------------------------------
+            # 黑色
+            # =============================================
 
             for i, item in enumerate(
                 items,
@@ -804,7 +1029,6 @@ def export_word():
                     f"{i}. {item['content']}"
                 )
 
-                # 所有代禱內容統一黑色
                 set_run_font(
                     r,
                     12,
@@ -816,9 +1040,9 @@ def export_word():
     con.close()
 
 
-    # -----------------------------------------------------
-    # 儲存 Word 至記憶體
-    # -----------------------------------------------------
+    # =====================================================
+    # 儲存 Word
+    # =====================================================
 
     bio = io.BytesIO()
 
@@ -827,20 +1051,12 @@ def export_word():
     bio.seek(0)
 
 
-    # -----------------------------------------------------
-    # 檔案名稱
-    # -----------------------------------------------------
-
     filename = (
         f"{week.replace('-', '')} "
         f"教會代禱信 "
         f"{group_code}組.docx"
     )
 
-
-    # -----------------------------------------------------
-    # 下載 Word
-    # -----------------------------------------------------
 
     return send_file(
         bio,
@@ -854,7 +1070,7 @@ def export_word():
 
 
 # =========================================================
-# 初始化資料庫
+# 初始化
 # =========================================================
 
 init_db()
@@ -865,6 +1081,7 @@ init_db()
 # =========================================================
 
 if __name__ == "__main__":
+
     app.run(
         debug=True,
         port=5000
