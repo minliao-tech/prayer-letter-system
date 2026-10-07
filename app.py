@@ -12,6 +12,10 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 app = Flask(__name__)
 app.secret_key = "change-this-before-production"
 
+# 保留 GROUPS 原本設定的排列順序
+# 避免傳到前端 JSON 時自動依名稱排序
+app.json.sort_keys = False
+
 BASE = Path(__file__).parent
 DB = BASE / "prayer_letters.db"
 
