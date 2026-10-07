@@ -5,7 +5,7 @@ import sqlite3
 import io
 
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -90,15 +90,14 @@ GROUPS = {
 
         "基層福音事工處": [],
 
-        "全人關顧中心": [],
-        
         "靈糧國度領袖學院": [
             "神學院",
             "生命培訓學院",
             "巴拿巴宣教學院",
             "職場轉化學院"
-        ]
-       
+        ],
+
+        "全人關顧中心": []
     },
 
     "D": {
@@ -840,6 +839,17 @@ def set_run_font(
 
 
 # =========================================================
+# Word 數字編號：換行文字對齊正文起點
+# =========================================================
+
+def set_numbered_paragraph(paragraph):
+
+    paragraph.paragraph_format.left_indent = Cm(0.65)
+    paragraph.paragraph_format.first_line_indent = Cm(-0.65)
+    paragraph.paragraph_format.tab_stops.add_tab_stop(Cm(0.65))
+
+
+# =========================================================
 # Word 水平分隔線：設在現有段落下方，避免額外空白段落
 # =========================================================
 
@@ -1064,6 +1074,13 @@ def export_word():
 
     doc = Document()
 
+    # Word「窄」邊界：上、下、左、右各 1.27 公分
+    for section in doc.sections:
+        section.top_margin = Cm(1.27)
+        section.bottom_margin = Cm(1.27)
+        section.left_margin = Cm(1.27)
+        section.right_margin = Cm(1.27)
+
 
     # =====================================================
     # 主標題
@@ -1130,7 +1147,9 @@ def export_word():
 
             p = doc.add_paragraph()
 
-            r = p.add_run("1. ")
+            set_numbered_paragraph(p)
+
+            r = p.add_run("1.\t")
 
             set_run_font(
                 r,
@@ -1359,12 +1378,14 @@ def export_word():
 
                 p = doc.add_paragraph()
 
+                set_numbered_paragraph(p)
+
                 p.paragraph_format.space_after = (
                     Pt(4)
                 )
 
                 r = p.add_run(
-                    f"{i}. {item['content']}"
+                    f"{i}.\t{item['content']}"
                 )
 
                 set_run_font(
