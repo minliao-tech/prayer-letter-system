@@ -7,6 +7,7 @@ import io
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 
@@ -838,6 +839,31 @@ def set_run_font(
 
 
 # =========================================================
+# Word 水平分隔線：設在現有段落下方，避免額外空白段落
+# =========================================================
+
+def add_horizontal_separator(paragraph):
+
+    p_pr = paragraph._p.get_or_add_pPr()
+    borders = p_pr.find(qn("w:pBdr"))
+
+    if borders is None:
+        borders = OxmlElement("w:pBdr")
+        p_pr.append(borders)
+
+    bottom = borders.find(qn("w:bottom"))
+
+    if bottom is None:
+        bottom = OxmlElement("w:bottom")
+        borders.append(bottom)
+
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "6")
+    bottom.set(qn("w:space"), "6")
+    bottom.set(qn("w:color"), "000000")
+
+
+# =========================================================
 # Word 顏色
 # =========================================================
 
@@ -1185,8 +1211,8 @@ def export_word():
             )
 
 
-    # 空一行
-    doc.add_paragraph()
+    # 第一層（包含特別聚會）結束後加入真正的段落下框線
+    add_horizontal_separator(doc.paragraphs[-1])
 
 
     # =====================================================
@@ -1218,8 +1244,8 @@ def export_word():
     )
 
 
-    # 第二層和正式代禱內容之間空一行
-    doc.add_paragraph()
+    # 當週所有單位名單結束後加入真正的段落下框線
+    add_horizontal_separator(doc.paragraphs[-1])
 
 
     # =====================================================
