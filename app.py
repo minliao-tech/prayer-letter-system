@@ -7,6 +7,7 @@ import io
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 
 
 app = Flask(__name__)
@@ -62,44 +63,44 @@ GROUPS = {
         "創新育成中心": []
     },
 
-"C": {
-    "牧養總部": [
-        "成人牧區",
-        "北區會堂",
-        "兒童牧區",
-        "天使心牧區",
-        "聯合崇拜",
-        "學生牧區",
-        "職場牧區",
-        "喜樂家族",
-        "台語牧區",
-        "客語牧區"
-    ],
+    "C": {
+        "牧養總部": [
+            "成人牧區",
+            "北區會堂",
+            "兒童牧區",
+            "天使心牧區",
+            "聯合崇拜",
+            "學生牧區",
+            "職場牧區",
+            "喜樂家族",
+            "台語牧區",
+            "客語牧區"
+        ],
 
-    "國際事工中心": [
-        "英語牧區",
-        "印尼牧區",
-        "越南牧區",
-        "菲律賓牧區"
-    ],
+        "國際事工中心": [
+            "英語牧區",
+            "印尼牧區",
+            "越南牧區",
+            "菲律賓牧區"
+        ],
 
-    "牧養支援處": [
-        "牧養企劃部",
-        "教育訓練部",
-        "KC館"
-    ],
+        "牧養支援處": [
+            "牧養企劃部",
+            "教育訓練部",
+            "KC館"
+        ],
 
-    "基層福音事工處": [],
+        "基層福音事工處": [],
 
-    "靈糧國度領袖學院": [
-        "神學院",
-        "生命培訓學院",
-        "巴拿巴宣教學院",
-        "職場轉化學院"
-    ],
+        "靈糧國度領袖學院": [
+            "神學院",
+            "生命培訓學院",
+            "巴拿巴宣教學院",
+            "職場轉化學院"
+        ],
 
-    "全人關顧中心": []
-},
+        "全人關顧中心": []
+    },
 
     "D": {
         "福音中心": [
@@ -122,8 +123,6 @@ GROUPS = {
 # 輪值設定
 # =========================================================
 #
-# 新基準：
-#
 # 2026/09/25 A
 # 2026/10/02 B
 # 2026/10/09 國慶連假，停辦
@@ -131,10 +130,9 @@ GROUPS = {
 # 2026/10/23 D
 # 2026/10/30 A
 # 2026/11/06 B
-# ...
 #
-# 遇到停辦日期時：
-# 1. 該週不安排組別
+# 遇到停辦日期：
+# 1. 該週不安排
 # 2. 不消耗輪值
 # 3. 下一個有效星期五接續下一組
 # =========================================================
@@ -151,18 +149,6 @@ ORDER = [
 
 # =========================================================
 # 停辦／連假日期
-# =========================================================
-#
-# 這裡放「該星期五不發代禱信」的日期。
-#
-# 未來若有其他連假，只要增加日期即可。
-#
-# 例如：
-#
-# date(2027, 2, 5),
-# date(2027, 2, 12),
-#
-# 程式會自動跳過，而且不會打亂 A/B/C/D 順序。
 # =========================================================
 
 SKIP_DATES = {
@@ -218,7 +204,6 @@ def init_db():
 def friday_of_week(d=None):
     d = d or date.today()
 
-    # 星期一=0，星期五=4
     if d.weekday() <= 4:
         return d + timedelta(
             days=(4 - d.weekday())
@@ -243,12 +228,9 @@ def is_skip_week(week_date):
 
 def group_for_week(week_date):
 
-    # 停辦週沒有輪值組
     if is_skip_week(week_date):
         return None
 
-    # 如果查詢的是基準日前日期，
-    # 往前逐週計算有效週數
     if week_date < ANCHOR_DATE:
 
         valid_weeks = 0
@@ -265,8 +247,6 @@ def group_for_week(week_date):
             (-valid_weeks) % len(ORDER)
         ]
 
-    # 基準日之後：
-    # 只計算「沒有被跳過」的有效星期五
     valid_weeks = 0
     cursor = ANCHOR_DATE
 
@@ -513,9 +493,6 @@ def admin():
         or group_for_week(wd)
     )
 
-    # 若管理者手動查詢停辦日期，
-    # 沒有指定 group 時，
-    # 將日期移到下一個有效輪值週。
     if not group_code:
 
         wd = next_active_friday(
@@ -711,6 +688,11 @@ def edit_submission(sid):
 # =========================================================
 # Word 字型
 # =========================================================
+#
+# 所有輸出的 Word 文字：
+# 中文、英文、數字
+# 全部統一指定為 Microsoft JhengHei（微軟正黑體）
+# =========================================================
 
 def set_run_font(
     run,
@@ -719,7 +701,33 @@ def set_run_font(
     color=None
 ):
 
-    run.font.name = (
+    # 一般字型
+    run.font.name = "Microsoft JhengHei"
+
+    # 中文 / 東亞字型
+    run._element.get_or_add_rPr()
+    rFonts = run._element.rPr.get_or_add_rFonts()
+
+    rFonts.set(
+        qn("w:eastAsia"),
+        "Microsoft JhengHei"
+    )
+
+    # 英文
+    rFonts.set(
+        qn("w:ascii"),
+        "Microsoft JhengHei"
+    )
+
+    # 英文 / 數字
+    rFonts.set(
+        qn("w:hAnsi"),
+        "Microsoft JhengHei"
+    )
+
+    # 複雜文字
+    rFonts.set(
+        qn("w:cs"),
         "Microsoft JhengHei"
     )
 
@@ -892,8 +900,6 @@ def export_word():
 
         if children:
 
-            # 先確認這個上層底下
-            # 至少有一個單位已繳交
             has_submission = any(
                 latest.get(
                     (parent, unit)
@@ -955,11 +961,8 @@ def export_word():
 
 
             # D 組特殊顯示：
-            #
-            # 金門
-            # →
-            # 金門福音中心
-            #
+            # 金門 → 金門福音中心
+
             if (
                 group_code == "D"
                 and
