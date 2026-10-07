@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-<header><div class="brand">台北領糧堂代禱信管理系統 <span>V1</span></div>
+<header><div class="brand">台北靈糧堂代禱信管理系統 <span>V1</span></div>
 <nav><a href="/">首頁</a><a href="/submit">填寫代禱信</a></nav></header>
 <main>{% with messages=get_flashed_messages() %}{% if messages %}<div class="alert">{{messages[0]}}</div>{% endif %}{% endwith %}
 {% block content %}{% endblock %}</main>
