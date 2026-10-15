@@ -2,6 +2,10 @@ from flask import Flask, request, redirect, url_for, render_template, send_file,
 from pathlib import Path
 from datetime import date, datetime, timedelta
 import sqlite3
+import os
+import re
+import secrets
+import uuid
 import io
 
 from docx import Document
@@ -139,10 +143,286 @@ SKIP_DATES = {
 # 資料庫
 # =========================================================
 
+SQLITE_SCHEMA = "\n    CREATE TABLE IF NOT EXISTS submissions(\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        week_date TEXT NOT NULL,\n        group_code TEXT NOT NULL,\n        parent_unit TEXT NOT NULL,\n        unit_name TEXT NOT NULL,\n        contact_name TEXT,\n        contact_email TEXT,\n        status TEXT NOT NULL DEFAULT 'submitted',\n        created_at TEXT NOT NULL\n    );\n\n    CREATE TABLE IF NOT EXISTS prayer_items(\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        submission_id INTEGER NOT NULL,\n        sort_order INTEGER NOT NULL,\n        content TEXT NOT NULL,\n        FOREIGN KEY(submission_id)\n            REFERENCES submissions(id)\n            ON DELETE CASCADE\n    );\n\n    CREATE TABLE IF NOT EXISTS weekly_settings(\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        week_date TEXT NOT NULL,\n        group_code TEXT NOT NULL,\n\n        meeting_date TEXT DEFAULT '',\n        pastors TEXT DEFAULT '',\n        special_event TEXT DEFAULT '',\n\n        updated_at TEXT NOT NULL,\n\n        UNIQUE(week_date, group_code)\n    );\n    "
+
+SHEET_ID = os.environ.get(
+    "GOOGLE_SHEET_ID", "162bNAUvU5RnJm99NmKSi4HZ1o7eE9Ml8lEMUj0aVTmM"
+).strip()
+SERVICE_ACCOUNT_FILE = os.environ.get(
+    "GOOGLE_SERVICE_ACCOUNT_FILE", "/etc/secrets/google-service-account.json"
+)
+
+# Each change appends a revision. Old rows are retained for recovery.
+# A revision's submission and prayer rows are written in one atomic batch.
+SHEET_TABLES = {
+    "submissions": ("繳交紀錄", [
+        "id", "week_date", "group_code", "parent_unit", "unit_name",
+        "contact_name", "contact_email", "status", "created_at", "revision"
+    ]),
+    "prayer_items": ("代禱事項", [
+        "id", "submission_id", "sort_order", "content", "revision"
+    ]),
+    "weekly_settings": ("本週設定", [
+        "id", "week_date", "group_code", "meeting_date", "pastors",
+        "special_event", "updated_at", "revision"
+    ])
+}
+
+
+def sheets_client():
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+
+    if not Path(SERVICE_ACCOUNT_FILE).is_file():
+        raise RuntimeError(
+            "Google Sheets credentials missing. Add google-service-account.json "
+            "as a Render Secret File and share the spreadsheet with its client_email."
+        )
+    credentials = Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    return build("sheets", "v4", credentials=credentials, cache_discovery=False)
+
+
+def sheet_row(values):
+    # stringValue preserves long integer IDs and user text beginning with '='.
+    return {"values": [
+        {"userEnteredValue": {"stringValue": "" if v is None else str(v)}}
+        for v in values
+    ]}
+
+
+def ensure_sheet_layout(api):
+    metadata = api.spreadsheets().get(
+        spreadsheetId=SHEET_ID, fields="sheets.properties"
+    ).execute(num_retries=2)
+    existing = {s["properties"]["title"]: s["properties"]["sheetId"]
+                for s in metadata.get("sheets", [])}
+    requests = []
+    for title, headers in SHEET_TABLES.values():
+        if title not in existing:
+            sheet_id = secrets.randbelow(2**30) + 1
+            while sheet_id in existing.values():
+                sheet_id = secrets.randbelow(2**30) + 1
+            existing[title] = sheet_id
+            requests.extend([
+                {"addSheet": {"properties": {
+                    "sheetId": sheet_id, "title": title,
+                    "gridProperties": {"frozenRowCount": 1,
+                                       "columnCount": len(headers), "rowCount": 1000}
+                }}},
+                {"appendCells": {"sheetId": sheet_id,
+                                 "rows": [sheet_row(headers)],
+                                 "fields": "userEnteredValue"}},
+                {"repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+                    "cell": {"userEnteredFormat": {
+                        "backgroundColor": {"red": 0.93, "green": 0.93, "blue": 0.93},
+                        "textFormat": {"bold": True, "foregroundColor": {
+                            "red": 0, "green": 0, "blue": 0}}
+                    }}, "fields": "userEnteredFormat"
+                }}
+            ])
+    if requests:
+        # Another worker may create these tabs at the same time. Only accept
+        # the failure if a fresh read confirms all expected tabs now exist.
+        from googleapiclient.errors import HttpError
+        try:
+            api.spreadsheets().batchUpdate(
+                spreadsheetId=SHEET_ID, body={"requests": requests}
+            ).execute()
+        except HttpError as error:
+            fresh = api.spreadsheets().get(
+                spreadsheetId=SHEET_ID, fields="sheets.properties"
+            ).execute(num_retries=2)
+            actual = {s["properties"]["title"]: s["properties"]["sheetId"]
+                      for s in fresh.get("sheets", [])}
+            if not all(title in actual for title, _ in SHEET_TABLES.values()):
+                raise error
+            existing = actual
+    return {title: existing[title] for title, _ in SHEET_TABLES.values()}
+
+
+class SheetsConnection:
+    """A disposable SQL view of durable Google Sheets records.
+
+    SQL runs in memory for compatibility with existing routes; successful
+    commit means Google accepted the changes, not merely local SQLite.
+    """
+
+    def __init__(self, api, sheet_ids):
+        self.api = api
+        self.sheet_ids = sheet_ids
+        self.connection = sqlite3.connect(":memory:")
+        self.connection.row_factory = sqlite3.Row
+        try:
+            self.connection.executescript(SQLITE_SCHEMA)
+            self._load()
+            self.original_submissions = self._submissions()
+            self.original_settings = self._settings()
+        except Exception:
+            self.connection.close()
+            raise
+
+    def _load(self):
+        result = self.api.spreadsheets().values().batchGet(
+            spreadsheetId=SHEET_ID,
+            ranges=[f"'{title}'!A:{chr(64 + len(headers))}"
+                    for title, headers in SHEET_TABLES.values()],
+            valueRenderOption="UNFORMATTED_VALUE"
+        ).execute(num_retries=2)
+        ranges = result.get("valueRanges", [])
+        if len(ranges) != len(SHEET_TABLES):
+            raise RuntimeError("Incomplete Google Sheets response; no data was written.")
+        records = {}
+        for (table, (title, headers)), data in zip(SHEET_TABLES.items(), ranges):
+            rows = data.get("values", [])
+            if not rows or rows[0] != headers:
+                raise RuntimeError(f"Header mismatch in {title}; restore the original headers.")
+            records[table] = []
+            for values in rows[1:]:
+                if not any(str(value) for value in values):
+                    continue
+                row = dict(zip(headers, list(values) + [""] * (len(headers) - len(values))))
+                if not row.get("id") or not row.get("revision"):
+                    raise RuntimeError(f"Incomplete record in {title}; check the sheet before continuing.")
+                for field in ("id", "submission_id", "sort_order"):
+                    if field in row:
+                        row[field] = int(row[field])
+                records[table].append(row)
+
+        latest_submissions = {}
+        for row in records["submissions"]:
+            latest_submissions[row["id"]] = row
+        latest_settings = {}
+        for row in records["weekly_settings"]:
+            latest_settings[(row["week_date"], row["group_code"])] = row
+
+        def insert(table, row):
+            columns = SHEET_TABLES[table][1][:-1]
+            self.connection.execute(
+                f"INSERT INTO {table} ({','.join(columns)}) "
+                f"VALUES ({','.join('?' for _ in columns)})",
+                [row[c] for c in columns]
+            )
+
+        for row in latest_submissions.values():
+            insert("submissions", row)
+        for row in latest_settings.values():
+            insert("weekly_settings", row)
+        seen = set()
+        for row in records["prayer_items"]:
+            sub = latest_submissions.get(row["submission_id"])
+            if sub and row["revision"] == sub["revision"] and row["id"] not in seen:
+                insert("prayer_items", row)
+                seen.add(row["id"])
+        self.connection.commit()
+
+    def execute(self, sql, params=()):
+        # Random IDs prevent two simultaneous submissions choosing max(id)+1.
+        match = re.match(r"\s*INSERT\s+INTO\s+(submissions|prayer_items|weekly_settings)\s*\(",
+                         sql, re.IGNORECASE)
+        if match:
+            table = match.group(1).lower()
+            new_id = secrets.randbelow(2**62 - 1) + 1
+            while self.connection.execute(
+                f"SELECT id FROM {table} WHERE id=?", (new_id,)
+            ).fetchone():
+                new_id = secrets.randbelow(2**62 - 1) + 1
+            sql = sql[:match.end()] + "id, " + sql[match.end():]
+            sql = re.sub(r"\bVALUES\s*\(", "VALUES(?, ", sql, count=1, flags=re.IGNORECASE)
+            params = (new_id,) + tuple(params)
+        return self.connection.execute(sql, params)
+
+    def executescript(self, sql):
+        return self.connection.executescript(sql)
+
+    def _submissions(self):
+        result = {}
+        for row in self.connection.execute("SELECT * FROM submissions"):
+            items = [dict(item) for item in self.connection.execute(
+                "SELECT * FROM prayer_items WHERE submission_id=? ORDER BY sort_order, id",
+                (row["id"],)
+            )]
+            result[row["id"]] = (dict(row), items)
+        return result
+
+    def _settings(self):
+        return {(row["week_date"], row["group_code"]): dict(row)
+                for row in self.connection.execute("SELECT * FROM weekly_settings")}
+
+    def commit(self):
+        submissions = self._submissions()
+        settings = self._settings()
+        pending = {table: [] for table in SHEET_TABLES}
+        revision = uuid.uuid4().hex
+        for sid, (sub, items) in submissions.items():
+            if self.original_submissions.get(sid) != (sub, items):
+                pending["submissions"].append(
+                    [sub[c] for c in SHEET_TABLES["submissions"][1][:-1]] + [revision]
+                )
+                for item in items:
+                    pending["prayer_items"].append(
+                        [item[c] for c in SHEET_TABLES["prayer_items"][1][:-1]] + [revision]
+                    )
+        for key, row in settings.items():
+            if self.original_settings.get(key) != row:
+                pending["weekly_settings"].append(
+                    [row[c] for c in SHEET_TABLES["weekly_settings"][1][:-1]] + [revision]
+                )
+        requests = []
+        for table, rows in pending.items():
+            if rows:
+                title = SHEET_TABLES[table][0]
+                requests.append({"appendCells": {
+                    "sheetId": self.sheet_ids[title],
+                    "rows": [sheet_row(row) for row in rows],
+                    "fields": "userEnteredValue"
+                }})
+        if requests:
+            # Submissions and their items are committed atomically. Do not
+            # return a success page when this call fails or times out.
+            self.api.spreadsheets().batchUpdate(
+                spreadsheetId=SHEET_ID, body={"requests": requests}
+            ).execute(num_retries=2)
+        self.connection.commit()
+        self.original_submissions = submissions
+        self.original_settings = settings
+
+    def close(self):
+        self.connection.close()
+        http = getattr(self.api, "_http", None)
+        if hasattr(http, "close"):
+            http.close()
+
+
+_sheet_ids = None
+
+
 def db():
-    con = sqlite3.connect(DB)
-    con.row_factory = sqlite3.Row
-    return con
+    global _sheet_ids
+    if not SHEET_ID:
+        raise RuntimeError("GOOGLE_SHEET_ID must not be empty.")
+    api = sheets_client()
+    if _sheet_ids is None:
+        _sheet_ids = ensure_sheet_layout(api)
+    return SheetsConnection(api, _sheet_ids)
+
+
+@app.errorhandler(Exception)
+def storage_error(error):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(error, HTTPException):
+        return error
+    app.logger.error("Request failed (%s).", type(error).__name__)
+    return (
+        "資料讀取或儲存未能確認成功，請保留您填寫的內容並稍後重試。"
+        "若正在提交資料，請先查看後台是否已有紀錄，避免重複繳交。"
+        "請管理員檢查 Google Sheets 連線設定。",
+        503
+    )
+
 
 
 def init_db():
@@ -399,7 +679,7 @@ def submit():
                 contact_email,
                 "submitted",
                 datetime.now().isoformat(
-                    timespec="seconds"
+                    timespec="microseconds"
                 )
             )
         )
@@ -653,7 +933,7 @@ def save_weekly_settings():
             pastors,
             special_event,
             datetime.now().isoformat(
-                timespec="seconds"
+                timespec="microseconds"
             )
         )
     )
@@ -1047,7 +1327,7 @@ def export_word():
                 'approved'
             )
 
-        ORDER BY id
+        ORDER BY created_at, id
         """,
         (
             week,
